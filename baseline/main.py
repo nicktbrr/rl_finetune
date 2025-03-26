@@ -72,8 +72,8 @@ def train_baseline(train_path, test_path, experiment_name="Network_Intrusion_Det
             model,
             "baseline_model",
             signature=signature,
+            code_paths=["baseline/model.py"],
         )
-    print('Loaded model')
 
 
 if __name__ == "__main__":
