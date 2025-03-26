@@ -33,8 +33,7 @@ def test_baseline(run_id, test_path, model_dir=None, experiment_name="Network_In
     """
 
     # Set device
-    if device is None:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Set up MLflow tracking and experiment
     mlflow.set_experiment(experiment_name)

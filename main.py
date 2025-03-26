@@ -2,6 +2,10 @@ import os
 import argparse
 import numpy as np
 import mlflow
+import torch
+from baseline.utils import preprocess_data
+import pandas as pd
+from generate_purturbed_data import create_perturbed_data
 
 from train import train_with_accuracy_checkpoints
 from evaluate import evaluate_rl_corrections
@@ -16,8 +20,8 @@ def main():
     # Main operation modes
     parser.add_argument('--mode', type=str, required=True, choices=['train', 'evaluate', 'infer'],
                         help='Operation mode: train, evaluate, or infer')
-    parser.add_argument('--baseline_data', type=str, required=True,
-                        help='Directory for saving/loading baseline model predictions and hidden representations files')
+    parser.add_argument('--baseline_run_id', type=str, required=True,
+                        help='Run id of baseline model')
 
     # Training arguments
     parser.add_argument('--timesteps', type=int, default=200000,
@@ -29,7 +33,7 @@ def main():
     parser.add_argument('--learning_rate', type=float, default=3e-4,
                         help='Learning rate for TD3 agent')
 
-    # MLflow arguments
+    # # MLflow arguments
     parser.add_argument('--experiment_name', type=str, default='RL_Correction',
                         help='MLflow experiment name')
     parser.add_argument('--run_name', type=str, default=None,
@@ -39,43 +43,44 @@ def main():
     parser.add_argument('--model_name', type=str, default='rl_correction_model',
                         help='Name for registered model')
 
-    # Evaluation/Inference arguments
-    parser.add_argument('--model_priority', type=str, default='fp',
-                        choices=['accuracy', 'fp', 'weighted'],
-                        help='Model selection priority: accuracy, fp, or weighted')
+    # # Evaluation/Inference arguments
+    # parser.add_argument('--model_priority', type=str, default='fp',
+    #                     choices=['accuracy', 'fp', 'weighted'],
+    #                     help='Model selection priority: accuracy, fp, or weighted')
 
     args = parser.parse_args()
 
     mlflow.set_tracking_uri('sqlite:///mlflow.db')
     mlflow.set_experiment(args.experiment_name)
 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     # Different operational modes
     if args.mode == 'train':
-        print("Loading base model predictions and representations...")
+        print("Loading base model")
         # In a real application, you would get these from your base model predictions
         # This is just a placeholder - replace with actual data loading logic
+        logged_model = f'runs:/{args.baseline_run_id}/baseline_model'
         try:
-            # Try to load from data_dir if available
-            baseline_probs, hidden_reps, true_labels = load_data(args.data_dir)
-            print(f"Loaded data from {args.data_dir}")
-        except FileNotFoundError:
-            # If files don't exist, this would typically come from your model
-            print("Data files not found. In a real application, you would use:")
-            print("baseline_probs, preds = model.predict(X_val)")
-            print("hidden_reps = model.get_hidden_reps(X_val)")
-            print("true_labels = y_val")
-            print("For demonstration, using randomly generated data instead...")
+            model = mlflow.pytorch.load_model(logged_model)
+            model = model.to(device)
+            print("Model loaded successfully")
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            return None
+        try:
+            print("Loading test data")
+            perturbed_data = pd.read_csv('data/perturbed_train_data.csv')
+        except Exception as e:
+            print(f"Error loading data: {e}")
+            return None
+        try:
+            print("Getting model Predictions")
 
-            # Generate some sample data for demonstration
-            n_samples = 1000
-            feature_dim = 64
-
-            baseline_probs = np.random.uniform(0, 1, size=n_samples)
-            hidden_reps = np.random.normal(0, 1, size=(n_samples, feature_dim))
-            true_labels = (np.random.random(n_samples) >
-                           0.7).astype(int)  # 30% positive rate
-
-        # Save data if requested
+            baseline_probs, hidden_reps = model(perturbed_data)
+        except Exception as e:
+            print(f"Error running model: {e}")
+            return None
         if args.save_data:
             save_data(baseline_probs, hidden_reps, true_labels, args.data_dir)
 
@@ -93,92 +98,92 @@ def main():
             learning_rate=args.learning_rate
         )
 
-        # Register model if requested
-        if args.register_model:
-            print(f"Registering models with MLflow...")
-            # Register all three model variants
-            log_model_to_registry(
-                "./best_model/best_accuracy_model.zip",
-                f"{args.model_name}_accuracy"
-            )
-            log_model_to_registry(
-                "./best_model/best_fp_model.zip",
-                f"{args.model_name}_fp"
-            )
-            log_model_to_registry(
-                "./best_model/best_weighted_model.zip",
-                f"{args.model_name}_weighted"
-            )
+        # # Register model if requested
+        # if args.register_model:
+        #     print(f"Registering models with MLflow...")
+        #     # Register all three model variants
+        #     log_model_to_registry(
+        #         "./best_model/best_accuracy_model.zip",
+        #         f"{args.model_name}_accuracy"
+        #     )
+        #     log_model_to_registry(
+        #         "./best_model/best_fp_model.zip",
+        #         f"{args.model_name}_fp"
+        #     )
+        #     log_model_to_registry(
+        #         "./best_model/best_weighted_model.zip",
+        #         f"{args.model_name}_weighted"
+        #     )
 
-    elif args.mode == 'evaluate':
-        print("Loading data for evaluation...")
-        try:
-            baseline_probs, hidden_reps, true_labels = load_data(args.data_dir)
-        except FileNotFoundError:
-            print(f"Error: Data files not found in {args.data_dir}")
-            return
+    # elif args.mode == 'evaluate':
+    #     print("Loading data for evaluation...")
+    #     try:
+    #         baseline_probs, hidden_reps, true_labels = load_data(args.data_dir)
+    #     except FileNotFoundError:
+    #         print(f"Error: Data files not found in {args.data_dir}")
+    #         return
 
-        print(f"Loading best model with priority: {args.model_priority}")
-        try:
-            model = get_best_model(priority=args.model_priority)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"Error loading model: {e}")
-            return
+    #     print(f"Loading best model with priority: {args.model_priority}")
+    #     try:
+    #         model = get_best_model(priority=args.model_priority)
+    #     except (FileNotFoundError, ValueError) as e:
+    #         print(f"Error loading model: {e}")
+    #         return
 
-        # Run evaluation
-        with mlflow.start_run(run_name=f"evaluation_{args.model_priority}"):
-            mlflow.log_param("model_priority", args.model_priority)
-            mlflow.log_param("max_adjustment", args.max_adjustment)
-            mlflow.log_param("data_size", len(baseline_probs))
+    #     # Run evaluation
+    #     with mlflow.start_run(run_name=f"evaluation_{args.model_priority}"):
+    #         mlflow.log_param("model_priority", args.model_priority)
+    #         mlflow.log_param("max_adjustment", args.max_adjustment)
+    #         mlflow.log_param("data_size", len(baseline_probs))
 
-            print("Evaluating RL model corrections...")
-            results = evaluate_rl_corrections(
-                model,
-                baseline_probs,
-                hidden_reps,
-                true_labels,
-                max_adjustment=args.max_adjustment,
-                log_to_mlflow=True
-            )
+    #         print("Evaluating RL model corrections...")
+    #         results = evaluate_rl_corrections(
+    #             model,
+    #             baseline_probs,
+    #             hidden_reps,
+    #             true_labels,
+    #             max_adjustment=args.max_adjustment,
+    #             log_to_mlflow=True
+    #         )
 
-    elif args.mode == 'infer':
-        print("Loading data for inference...")
-        try:
-            baseline_probs, hidden_reps, _ = load_data(args.data_dir)
-            # In inference mode, we don't need true labels
-        except FileNotFoundError:
-            print(f"Error: Data files not found in {args.data_dir}")
-            return
+    # elif args.mode == 'infer':
+    #     print("Loading data for inference...")
+    #     try:
+    #         baseline_probs, hidden_reps, _ = load_data(args.data_dir)
+    #         # In inference mode, we don't need true labels
+    #     except FileNotFoundError:
+    #         print(f"Error: Data files not found in {args.data_dir}")
+    #         return
 
-        print(f"Loading best model with priority: {args.model_priority}")
-        try:
-            model = get_best_model(priority=args.model_priority)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"Error loading model: {e}")
-            return
+    #     print(f"Loading best model with priority: {args.model_priority}")
+    #     try:
+    #         model = get_best_model(priority=args.model_priority)
+    #     except (FileNotFoundError, ValueError) as e:
+    #         print(f"Error loading model: {e}")
+    #         return
 
-        # Apply corrections
-        print("Applying RL model corrections...")
-        corrected_probs = apply_corrections(
-            model,
-            baseline_probs,
-            hidden_reps,
-            max_adjustment=args.max_adjustment
-        )
+    #     # Apply corrections
+    #     print("Applying RL model corrections...")
+    #     corrected_probs = apply_corrections(
+    #         model,
+    #         baseline_probs,
+    #         hidden_reps,
+    #         max_adjustment=args.max_adjustment
+    #     )
 
-        # Calculate changes
-        original_preds = (baseline_probs >= 0.5).astype(int)
-        corrected_preds = (corrected_probs >= 0.5).astype(int)
-        changed = np.sum(original_preds != corrected_preds)
+    #     # Calculate changes
+    #     original_preds = (baseline_probs >= 0.5).astype(int)
+    #     corrected_preds = (corrected_probs >= 0.5).astype(int)
+    #     changed = np.sum(original_preds != corrected_preds)
 
-        print(f"Applied corrections to {len(baseline_probs)} predictions")
-        print(
-            f"Changed {changed} predictions ({changed/len(baseline_probs)*100:.2f}%)")
+    #     print(f"Applied corrections to {len(baseline_probs)} predictions")
+    #     print(
+    #         f"Changed {changed} predictions ({changed/len(baseline_probs)*100:.2f}%)")
 
-        # Save the corrected probabilities
-        output_file = os.path.join(args.data_dir, "corrected_probs.npy")
-        np.save(output_file, corrected_probs)
-        print(f"Saved corrected probabilities to {output_file}")
+    #     # Save the corrected probabilities
+    #     output_file = os.path.join(args.data_dir, "corrected_probs.npy")
+    #     np.save(output_file, corrected_probs)
+    #     print(f"Saved corrected probabilities to {output_file}")
 
 
 if __name__ == "__main__":

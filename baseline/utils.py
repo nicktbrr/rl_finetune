@@ -29,6 +29,7 @@ def preprocess_data(train_df, test_df=None, log_transformations=True, run_id=Non
         train_df, test_df, transformations)
     train_df, test_df, transformations = log_transform(
         train_df, test_df, transformations)
+
     train_df, test_df, transformations = encode_categorical(
         train_df, test_df, transformations)
 
