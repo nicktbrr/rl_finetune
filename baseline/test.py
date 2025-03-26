@@ -1,239 +1,193 @@
-"""
-Test and evaluate the trained baseline model.
-"""
-
 import os
-import argparse
+import torch
 import numpy as np
-import pandas as pd
 import mlflow
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
-    confusion_matrix, ConfusionMatrixDisplay,
+    confusion_matrix,
     precision_recall_curve, roc_curve, auc,
     accuracy_score, precision_score, recall_score, f1_score
 )
-
-from model import BaselineModel
-from train import preprocess_data
-
-
-def plot_roc_curve(y_true, y_prob):
-    """Plot ROC curve and save to file."""
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    roc_auc = auc(fpr, tpr)
-    
-    plt.figure(figsize=(8, 8))
-    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
-    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic (ROC) Curve')
-    plt.legend(loc="lower right")
-    
-    roc_path = "roc_curve.png"
-    plt.savefig(roc_path)
-    plt.close()
-    
-    return roc_path, roc_auc
+import seaborn as sns
+from torch.utils.data import DataLoader, TensorDataset
 
 
-def plot_precision_recall_curve(y_true, y_prob):
-    """Plot precision-recall curve and save to file."""
-    precision, recall, _ = precision_recall_curve(y_true, y_prob)
-    
-    plt.figure(figsize=(8, 8))
-    plt.plot(recall, precision, color='blue', lw=2)
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.ylim([0.0, 1.05])
-    plt.xlim([0.0, 1.0])
-    plt.title('Precision-Recall Curve')
-    
-    pr_path = "precision_recall_curve.png"
-    plt.savefig(pr_path)
-    plt.close()
-    
-    return pr_path
-
-
-def plot_prob_distribution(y_true, y_prob):
-    """Plot probability distribution for both classes."""
-    plt.figure(figsize=(10, 6))
-    
-    # Plot distributions
-    plt.hist(y_prob[y_true == 0], bins=50, alpha=0.5, label='Normal (Class 0)')
-    plt.hist(y_prob[y_true == 1], bins=50, alpha=0.5, label='Attack (Class 1)')
-    
-    plt.xlabel('Predicted Probability')
-    plt.ylabel('Frequency')
-    plt.title('Probability Distribution by Class')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    dist_path = "probability_distribution.png"
-    plt.savefig(dist_path)
-    plt.close()
-    
-    return dist_path
-
-
-def evaluate_model(model_path, test_path, threshold=0.5):
+def evaluate_model(run_id, X_test, y_test=None, device='cuda', batch_size=256):
     """
-    Evaluate a trained model on test data.
-    
+    Evaluate a trained model on test data or run inference.
+
     Args:
-        model_path: Path to the saved model
-        test_path: Path to test data CSV
-        threshold: Classification threshold
-    
+        run_id: MLflow run ID of the model to evaluate
+        X_test: Test feature data (numpy array or torch tensor)
+        y_test: Test labels (numpy array or torch tensor), optional for inference mode
+        device: Computing device ('cuda' or 'cpu')
+        batch_size: Batch size for evaluation
+        threshold: Classification threshold for binary prediction
+
     Returns:
-        Dictionary of evaluation metrics
+        Dictionary of evaluation metrics if y_test is provided, 
+        or predictions if y_test is None (inference mode)
     """
-    # Set up MLflow
-    mlflow.set_experiment("Network_Intrusion_Detection")
-    
-    with mlflow.start_run(run_name="baseline_evaluation"):
-        # Load the model
-        print(f"Loading model from {model_path}")
-        model = BaselineModel(input_dim=1, model_path=model_path)  # Input dim will be overridden by loaded model
-        try:
-            model.load()
-        except FileNotFoundError:
-            print(f"Model not found at {model_path}. Please train the model first.")
-            return None
-        
-        # Load and preprocess test data
-        print(f"Loading test data from {test_path}")
-        test_df = pd.read_csv(test_path)
-        
-        # Preprocess test data (this requires train data for consistent preprocessing)
-        if os.path.exists(test_path.replace('test', 'train')):
-            train_path = test_path.replace('test', 'train')
-            train_df = pd.read_csv(train_path)
-            _, _, X_test, y_test = preprocess_data(train_df, test_df)
-        else:
-            print("Warning: Training data not found for consistent preprocessing.")
-            print("Using simplified preprocessing which may affect results.")
-            X_test = test_df.iloc[:, :-1].values  # Assuming last column is the target
-            y_test = test_df.iloc[:, -1].values
-        
+    # Determine if we're in evaluation or inference mode
+    evaluation_mode = y_test is not None
+    # Load the model
+    print(f"Loading model {run_id}")
+    logged_model = f'runs:/{run_id}/baseline_model'
+    try:
+        model = mlflow.pytorch.load_model(logged_model)
+        model = model.to(device)
+        print("Model loaded successfully")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        return None
+
+    # Convert inputs to torch tensors if they're not already
+    if not isinstance(X_test, torch.Tensor):
+        X_test = torch.FloatTensor(X_test)
+    X_test = X_test.to(device)
+
+    # Create proper data loader
+    if evaluation_mode:
+        if not isinstance(y_test, torch.Tensor):
+            y_test = torch.FloatTensor(y_test)
+        y_test = y_test.to(device)
+
         # Log parameters
         mlflow.log_params({
-            "model_path": model_path,
-            "test_data": test_path,
-            "threshold": threshold,
+            "model_id": run_id,
             "test_samples": X_test.shape[0],
-            "positive_test_ratio": float(np.mean(y_test))
+            "num_pos_class": int(y_test.sum().item()),
+            "num_neg_class": int(y_test.shape[0] - y_test.sum().item()),
+            "positive_test_ratio": float(torch.mean(y_test).item()),
         })
-        
-        # Make predictions
-        print("Making predictions...")
-        probs, preds = model.predict(X_test, threshold=threshold)
-        
-        # Generate evaluation metrics
-        print("Computing metrics...")
-        accuracy = accuracy_score(y_test, preds)
-        recall = recall_score(y_test, preds, average='weighted')
-        precision = precision_score(y_test, preds, average='weighted')
-        f1 = f1_score(y_test, preds, average='weighted')
-        
-        # Generate confusion matrix
-        cm = confusion_matrix(y_test, preds)
-        tn, fp, fn, tp = cm.ravel()
-        
-        # Compute intrusion detection specific metrics
-        fpr = fp / (fp + tn)  # False positive rate
-        fnr = fn / (fn + tp)  # False negative rate (miss rate)
-        detection_rate = tp / (tp + fn)  # True positive rate (sensitivity)
-        
-        # Plot and save visualizations
-        print("Generating visualizations...")
-        cm_disp = ConfusionMatrixDisplay(confusion_matrix=cm)
-        fig, ax = plt.subplots(figsize=(8, 8))
-        cm_disp.plot(ax=ax)
-        plt.title("Confusion Matrix")
-        cm_path = "confusion_matrix.png"
-        plt.savefig(cm_path)
-        plt.close()
-        
-        # Generate ROC curve
-        roc_path, roc_auc = plot_roc_curve(y_test, probs)
-        
-        # Generate precision-recall curve
-        pr_path = plot_precision_recall_curve(y_test, probs)
-        
-        # Generate probability distribution plot
-        dist_path = plot_prob_distribution(y_test, probs)
-        
-        # Log all metrics
+
+        test_dataset = TensorDataset(X_test, y_test)
+        test_loader = DataLoader(
+            test_dataset, batch_size=batch_size, shuffle=False)
+    else:
+        # For inference, we don't have labels
+        test_dataset = TensorDataset(X_test)
+        test_loader = DataLoader(
+            test_dataset, batch_size=batch_size, shuffle=False)
+
+    # Evaluate the model
+    model.eval()
+    all_predictions = []
+    all_probabilities = []
+    all_true_labels = [] if evaluation_mode else None
+
+    with torch.no_grad():
+        if evaluation_mode:
+            for batch_X, batch_y in test_loader:
+                outputs = model(batch_X)
+
+                # Handle different model output formats
+                if isinstance(outputs, tuple):
+                    # Assuming the first element is the main output
+                    outputs = outputs[0]
+
+                probabilities = outputs.squeeze()
+                predictions = (probabilities >= 0.5).float()
+
+                all_probabilities.extend(probabilities.cpu().numpy())
+                all_predictions.extend(predictions.cpu().numpy())
+                all_true_labels.extend(batch_y.cpu().numpy())
+        else:
+            for (batch_X,) in test_loader:
+                outputs = model(batch_X)
+
+                # Handle different model output formats
+                if isinstance(outputs, tuple):
+                    # Assuming the first element is the main output
+                    outputs = outputs[0]
+
+                probabilities = outputs.squeeze()
+                predictions = (probabilities >= 0.5).float()
+
+                all_probabilities.extend(probabilities.cpu().numpy())
+                all_predictions.extend(predictions.cpu().numpy())
+
+    # Convert lists to numpy arrays
+    all_predictions = np.array(all_predictions)
+    all_probabilities = np.array(all_probabilities)
+
+    # If in evaluation mode, calculate and log metrics
+    if evaluation_mode:
+        all_true_labels = np.array(all_true_labels)
+
+        # Calculate metrics
+        accuracy = accuracy_score(all_true_labels, all_predictions)
+        precision = precision_score(all_true_labels, all_predictions)
+        recall = recall_score(all_true_labels, all_predictions)
+        f1 = f1_score(all_true_labels, all_predictions)
+
+        # Log metrics
         metrics = {
             "accuracy": accuracy,
             "precision": precision,
             "recall": recall,
-            "f1_score": f1,
-            "roc_auc": roc_auc,
-            "true_positives": tp,
-            "true_negatives": tn,
-            "false_positives": fp,
-            "false_negatives": fn,
-            "false_positive_rate": fpr,
-            "false_negative_rate": fnr,
-            "detection_rate": detection_rate
+            "f1_score": f1
         }
-        
         mlflow.log_metrics(metrics)
-        
-        # Log plots
-        mlflow.log_artifact(cm_path)
-        mlflow.log_artifact(roc_path)
-        mlflow.log_artifact(pr_path)
-        mlflow.log_artifact(dist_path)
-        
-        # Generate baseline predictions for RL fine-tuning
-        print("Generating data for RL fine-tuning...")
-        output_dir = os.path.dirname(model_path)
-        
-        # Extract hidden representations
-        hidden_reps = model.get_hidden_reps(X_test)
-        
-        # Save data for RL
-        np.save(os.path.join(output_dir, "baseline_probs.npy"), probs)
-        np.save(os.path.join(output_dir, "hidden_reps.npy"), hidden_reps)
-        np.save(os.path.join(output_dir, "true_labels.npy"), y_test)
-        
-        # Log data artifacts
-        mlflow.log_artifact(os.path.join(output_dir, "baseline_probs.npy"), "rl_data")
-        mlflow.log_artifact(os.path.join(output_dir, "hidden_reps.npy"), "rl_data")
-        mlflow.log_artifact(os.path.join(output_dir, "true_labels.npy"), "rl_data")
-        
-        # Print results
-        print("\nEvaluation Results:")
-        print(f"Accuracy: {accuracy:.4f}")
-        print(f"Precision: {precision:.4f}")
-        print(f"Recall: {recall:.4f}")
-        print(f"F1 Score: {f1:.4f}")
-        print(f"ROC AUC: {roc_auc:.4f}")
-        print(f"False Positive Rate: {fpr:.4f}")
-        print(f"False Negative Rate: {fnr:.4f}")
-        print(f"Detection Rate: {detection_rate:.4f}")
-        print(f"Confusion Matrix:\n{cm}")
-        
+
+        # Generate confusion matrix
+        cm = confusion_matrix(all_true_labels, all_predictions)
+        plt.figure(figsize=(6, 5))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False)
+        plt.xlabel('Predicted label')
+        plt.ylabel('True label')
+        plt.title('Confusion Matrix')
+        cm_filename = 'confusion_matrix.png'
+        plt.savefig(cm_filename)
+        plt.close()
+        mlflow.log_artifact(cm_filename)
+        os.remove(cm_filename)
+
+        # Generate ROC curve
+        fpr, tpr, _ = roc_curve(all_true_labels, all_probabilities)
+        roc_auc = auc(fpr, tpr)
+        plt.figure(figsize=(6, 5))
+        plt.plot(fpr, tpr, color='darkorange', lw=2,
+                 label=f'ROC curve (area = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic')
+        plt.legend(loc="lower right")
+        roc_filename = 'roc_curve.png'
+        plt.savefig(roc_filename)
+        plt.close()
+        mlflow.log_artifact(roc_filename)
+        os.remove(roc_filename)
+
+        # Generate precision-recall curve
+        precision_curve, recall_curve, _ = precision_recall_curve(
+            all_true_labels, all_probabilities)
+        pr_auc = auc(recall_curve, precision_curve)
+        plt.figure(figsize=(6, 5))
+        plt.plot(recall_curve, precision_curve, color='green',
+                 lw=2, label=f'PR curve (area = {pr_auc:.2f})')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall Curve')
+        plt.legend(loc="lower left")
+        pr_filename = 'precision_recall_curve.png'
+        plt.savefig(pr_filename)
+        plt.close()
+        mlflow.log_artifact(pr_filename)
+        os.remove(pr_filename)
+
+        print(
+            f"Evaluation completed with accuracy: {accuracy:.4f}, precision: {precision:.4f}, recall: {recall:.4f}, F1: {f1:.4f}")
         return metrics
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Evaluate baseline network intrusion detection model")
-    parser.add_argument("--model", required=True, help="Path to saved model")
-    parser.add_argument("--test", required=True, help="Path to test data CSV")
-    parser.add_argument("--threshold", type=float, default=0.5, help="Classification threshold")
-    
-    args = parser.parse_args()
-    
-    evaluate_model(args.model, args.test, args.threshold)
-
-
-if __name__ == "__main__":
-    main()
+    else:
+        # In inference mode, return predictions and probabilities
+        print(f"Inference completed on {X_test.shape[0]} samples")
+        return {
+            "predictions": all_predictions,
+            "probabilities": all_probabilities
+        }
