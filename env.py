@@ -39,16 +39,20 @@ class EnhancedFineTuneEnv(gym.Env):
             # Return zeros if we're beyond data bounds
             return np.zeros(self.observation_space.shape, dtype=np.float32)
 
-        prob = self.baseline_probs[self.current_index]
+        prob = self.baseline_probs[self.current_index][0]
         feats = self.hidden_reps[self.current_index]
         true_label = self.true_labels[self.current_index]
 
+        # print(prob, feats.shape, true_label)
         # Calculate distance from decision boundary
         dist_from_threshold = abs(prob - 0.5)
 
+        # print(self.positive_ratio.shape, self.negative_ratio.shape)
+
         # Include distance, true label, and class distribution as observation features
-        return np.concatenate(([prob, dist_from_threshold, float(true_label),
+        temp = np.concatenate(([prob, dist_from_threshold, float(true_label),
                               self.positive_ratio, self.negative_ratio], feats)).astype(np.float32)
+        return temp
 
     def step(self, action):
         prob = self.baseline_probs[self.current_index]

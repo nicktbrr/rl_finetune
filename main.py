@@ -6,8 +6,10 @@ import torch
 from baseline.utils import preprocess_data
 import pandas as pd
 from generate_purturbed_data import create_perturbed_data
-
+from sklearn.model_selection import train_test_split
 from train import train_with_accuracy_checkpoints
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 from evaluate import evaluate_rl_corrections
 from utils import save_data, load_data, get_best_model, apply_corrections, log_model_to_registry
 
@@ -24,7 +26,7 @@ def main():
                         help='Run id of baseline model')
 
     # Training arguments
-    parser.add_argument('--timesteps', type=int, default=200000,
+    parser.add_argument('--timesteps', type=int, default=10000,
                         help='Number of training timesteps')
     parser.add_argument('--max_adjustment', type=float, default=0.6,
                         help='Maximum probability adjustment allowed')
@@ -76,27 +78,60 @@ def main():
             return None
         try:
             print("Getting model Predictions")
+            X = perturbed_data.to_numpy()
+            y = X[:, -1]
+            X = X[:, :-1]
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y)
+            X_train_tensor = torch.tensor(
+                X_train, dtype=torch.float32).to(device)
+            baseline_probs, hidden_reps = model(X_train_tensor)
 
-            baseline_probs, hidden_reps = model(perturbed_data)
+            y_pred = (baseline_probs >= 0.5).float().cpu().numpy().squeeze()
+
+            # Compute confusion matrix
+            cm = confusion_matrix(y_train, y_pred)
+
+            # Display confusion matrix
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+            disp.plot(cmap='Blues')
+            plt.title("Confusion Matrix Before RL Training")
         except Exception as e:
             print(f"Error running model: {e}")
             return None
-        if args.save_data:
-            save_data(baseline_probs, hidden_reps, true_labels, args.data_dir)
+        with mlflow.start_run(run_name=args.run_name):
+            # Save confusion matrix figure
+            cm_fig = disp.figure_
+            cm_path = "before_rl_confusion_matrix.png"
+            cm_fig.savefig(cm_path)
+            mlflow.log_artifact(cm_path, artifact_path="before_rl")
 
-        # Train the RL model
-        print(f"Starting training with {args.timesteps} timesteps...")
-        trained_model = train_with_accuracy_checkpoints(
-            baseline_probs=baseline_probs,
-            hidden_reps=hidden_reps,
-            true_labels=true_labels,
-            max_adjustment=args.max_adjustment,
-            timesteps=args.timesteps,
-            experiment_name=args.experiment_name,
-            run_name=args.run_name,
-            fp_weight=args.fp_weight,
-            learning_rate=args.learning_rate
-        )
+            # Log some basic pre-training metrics
+            cm_values = cm.ravel()
+            if len(cm_values) == 4:
+                tn, fp, fn, tp = cm_values
+                mlflow.log_metric("before_rl_true_negatives", tn)
+                mlflow.log_metric("before_rl_false_positives", fp)
+                mlflow.log_metric("before_rl_false_negatives", fn)
+                mlflow.log_metric("before_rl_true_positives", tp)
+                mlflow.log_metric("before_rl_accuracy", (tp + tn) / cm.sum())
+                mlflow.log_metric("before_rl_precision", tp / (tp + fp + 1e-8))
+                mlflow.log_metric("before_rl_recall", tp / (tp + fn + 1e-8))
+
+            # Train the RL model
+            print(f"Starting training with {args.timesteps} timesteps...")
+
+            trained_model = train_with_accuracy_checkpoints(
+                baseline_probs=baseline_probs.detach().numpy(),
+                hidden_reps=hidden_reps.detach().numpy(),
+                true_labels=y_train,
+                max_adjustment=args.max_adjustment,
+                timesteps=args.timesteps,
+                experiment_name=args.experiment_name,
+                run_name=args.run_name,
+                fp_weight=args.fp_weight,
+                learning_rate=args.learning_rate
+            )
 
         # # Register model if requested
         # if args.register_model:

@@ -22,7 +22,7 @@ class AccuracyCheckpointCallback(BaseCallback):
                  verbose=1):
         super(AccuracyCheckpointCallback, self).__init__(verbose)
         self.eval_env = eval_env
-        self.baseline_probs = np.array(baseline_probs)
+        self.baseline_probs = np.array(baseline_probs.squeeze())
         self.true_labels = np.array(true_labels)
         self.check_freq = check_freq
         self.save_path = save_path
@@ -123,10 +123,10 @@ class AccuracyCheckpointCallback(BaseCallback):
                 self.best_accuracy = accuracy
                 model_path = f"{self.save_path}/best_accuracy_model.zip"
                 self.model.save(model_path)
-                
+
                 if self.log_to_mlflow:
                     mlflow.log_artifact(model_path, "models")
-                
+
                 if self.verbose > 0:
                     print(
                         f"✅ Saved model with best accuracy: {accuracy:.4f} (improved by {improvement:.4f})")
@@ -136,10 +136,10 @@ class AccuracyCheckpointCallback(BaseCallback):
                 self.best_weighted_score = weighted_score
                 model_path = f"{self.save_path}/best_weighted_model.zip"
                 self.model.save(model_path)
-                
+
                 if self.log_to_mlflow:
                     mlflow.log_artifact(model_path, "models")
-                
+
                 if self.verbose > 0:
                     print(
                         f"✅ Saved model with best weighted score: {weighted_score:.4f}")
@@ -150,13 +150,13 @@ class AccuracyCheckpointCallback(BaseCallback):
                 self.best_fp = fp
                 model_path = f"{self.save_path}/best_fp_model.zip"
                 self.model.save(model_path)
-                
+
                 if self.log_to_mlflow:
                     mlflow.log_artifact(model_path, "models")
-                
+
                 if self.verbose > 0:
                     print(
-                        f"✅ Saved model with best FP: {fp} (improved by {improvement})")
+                        f"Saved model with best FP: {fp} (improved by {improvement})")
 
             # Update best false negatives if improved
             if fn < self.best_fn:
@@ -168,13 +168,14 @@ class AccuracyCheckpointCallback(BaseCallback):
                     if self.best_accuracy >= threshold and (self.best_accuracy - improvement) < threshold:
                         threshold_path = f"{self.save_path}/model_acc{int(threshold*100)}.zip"
                         self.model.save(threshold_path)
-                        
+
                         if self.log_to_mlflow:
-                            mlflow.log_artifact(threshold_path, "threshold_models")
-                        
+                            mlflow.log_artifact(
+                                threshold_path, "threshold_models")
+
                         if self.verbose > 0:
                             print(
-                                f"📊 Saved threshold model at {threshold_path} (accuracy ≥ {threshold:.2f})")
+                                f"Saved threshold model at {threshold_path} (accuracy ≥ {threshold:.2f})")
 
         return True
 
@@ -249,12 +250,13 @@ class AccuracyCheckpointCallback(BaseCallback):
 
         # Process each example
         for i in range(len(baseline_probs)):
-            prob = baseline_probs[i]
+            prob = baseline_probs[i].squeeze()
             feature = features[i]
             true_label = true_labels[i]
 
             # Create observation
             dist_from_threshold = abs(prob - 0.5)
+
             obs = np.concatenate(([prob, dist_from_threshold, float(true_label),
                                    positive_ratio, negative_ratio], feature)).astype(np.float32)
 
