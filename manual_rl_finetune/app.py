@@ -332,12 +332,12 @@ else:
                     with col2:
                         if st.button("Clear Selection"):
                             st.session_state.selected_points = []
-                            st.experimental_rerun()
+                            st.rerun()
                     
                     with col3:
                         if st.button("Select All"):
                             st.session_state.selected_points = unclassified_indices.copy()
-                            st.experimental_rerun()
+                            st.rerun()
                     
                     # Add a custom event handler for clicks
                     if st.button("Update Selection", key="update_selection"):
@@ -351,7 +351,7 @@ else:
                             
                             if selected_indices:
                                 st.session_state.selected_points = selected_indices
-                                st.experimental_rerun()
+                                st.rerun()
                         except Exception as e:
                             st.error(f"Error updating selection: {str(e)}")
                             pass
@@ -374,7 +374,7 @@ else:
                                 st.session_state.done = done
                                 st.session_state.training_history.append(info)
                                 st.session_state.selected_points = []
-                                st.experimental_rerun()
+                                st.rerun()
                         
                         with col2:
                             if st.button("Classify Selected as Attack", key="attack_selected"):
@@ -388,7 +388,7 @@ else:
                                 st.session_state.done = done
                                 st.session_state.training_history.append(info)
                                 st.session_state.selected_points = []
-                                st.experimental_rerun()
+                                st.rerun()
                     
                     # Add individual classification buttons
                     st.markdown('<div class="classification-section">', unsafe_allow_html=True)
