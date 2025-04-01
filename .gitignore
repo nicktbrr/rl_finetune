@@ -4,6 +4,7 @@ mlflow.db
 before_rl_confusion_matrix.png
 best_model/
 transformations.json
+node_modules
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
