@@ -9,6 +9,8 @@ transformations.json
 __pycache__/
 *.py[cod]
 *$py.class
+package-lock.json
+manual_rl_finetune/frontend/package-lock.json
 
 # C extensions
 *.so
