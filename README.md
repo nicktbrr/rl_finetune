@@ -47,7 +47,17 @@ python main.py --mode train --timesteps 200000 --experiment_name "rl_correction"
 Evaluate a trained model:
 
 ```bash
-python main.py --mode evaluate --model_priority fp --data_dir ./data
+python main.py \
+    --mode train \
+    --baseline_run_id a64b253029b54b8d9405875c85d95870 \
+    --timesteps 5000 \
+    --max_adjustment 0.7 \
+    --fp_weight 1.3 \
+    --use_input_features \
+    --experiment_name "RL_Correction_Experiment_input" \
+    --run_name "with_input_features" \
+    --register_model \
+    --model_name "rl_correction_with_features"
 ```
 
 ### Inference
@@ -69,7 +79,13 @@ This package includes full integration with MLflow for experiment tracking:
 To view the MLflow UI:
 
 ```bash
-mlflow ui
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+If the port is in use:
+
+```bash
+lsof -ti :5000 | xargs kill -9
 ```
 
 Then navigate to http://localhost:5000 in your browser.

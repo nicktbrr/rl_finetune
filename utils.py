@@ -280,3 +280,53 @@ def log_model_to_registry(model_path, model_name, run_id=None):
     result = mlflow.register_model(model_uri, model_name)
     print(f"Model registered: {model_name} (version {result.version})")
     return result.version
+
+
+def save_rl_model_with_mlflow(model, model_name, artifacts=None, params=None, metrics=None):
+    """
+    Save a reinforcement learning model with MLflow
+
+    Args:
+        model: The trained RL model (e.g., TD3, PPO)
+        model_name: Name for the model in the registry
+        artifacts: Dictionary of additional artifacts to log
+        params: Dictionary of parameters to log
+        metrics: Dictionary of metrics to log
+    """
+    # Start MLflow run if not already in one
+    with mlflow.start_run(run_name=f"{model_name}_save") as run:
+        run_id = run.info.run_id
+
+        # Log parameters
+        if params:
+            mlflow.log_params(params)
+
+        # Log metrics
+        if metrics:
+            mlflow.log_metrics(metrics)
+
+        # Save model to a temporary file
+        temp_model_path = f"temp_{model_name}.zip"
+        model.save(temp_model_path)
+
+        # Log the model file as an artifact
+        mlflow.log_artifact(temp_model_path, "model")
+
+        # Log additional artifacts
+        if artifacts:
+            for name, path in artifacts.items():
+                mlflow.log_artifact(path, name)
+
+        # Clean up
+        if os.path.exists(temp_model_path):
+            os.remove(temp_model_path)
+
+        # Register the model in the MLflow registry
+        model_uri = f"runs:/{run_id}/model"
+        registered_model = mlflow.register_model(model_uri, model_name)
+
+        print(f"Model saved with run_id: {run_id}")
+        print(
+            f"Model registered as: {model_name}, version: {registered_model.version}")
+
+        return run_id, registered_model

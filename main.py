@@ -10,8 +10,8 @@ from sklearn.model_selection import train_test_split
 from train import train_with_accuracy_checkpoints
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
-from evaluate import evaluate_rl_corrections
-from utils import save_data, load_data, get_best_model, apply_corrections, log_model_to_registry
+from stable_baselines3 import TD3
+from evaluate import td3_inference
 
 
 def main():
@@ -35,8 +35,14 @@ def main():
     parser.add_argument('--learning_rate', type=float, default=3e-4,
                         help='Learning rate for TD3 agent')
 
-    # # MLflow arguments
-    parser.add_argument('--experiment_name', type=str, default='RL_Correction',
+    # New argument for using original input features
+    parser.add_argument('--use_input_features', action='store_true',
+                        help='Include original input features in the RL model training')
+    parser.add_argument('--normalize_features', action='store_true',
+                        help='Normalize input features before passing to RL model')
+
+    # MLflow arguments
+    parser.add_argument('--experiment_name', type=str, default='RL_Correction_input_features',
                         help='MLflow experiment name')
     parser.add_argument('--run_name', type=str, default=None,
                         help='MLflow run name')
@@ -44,11 +50,6 @@ def main():
                         help='Register best model in MLflow model registry')
     parser.add_argument('--model_name', type=str, default='rl_correction_model',
                         help='Name for registered model')
-
-    # # Evaluation/Inference arguments
-    # parser.add_argument('--model_priority', type=str, default='fp',
-    #                     choices=['accuracy', 'fp', 'weighted'],
-    #                     help='Model selection priority: accuracy, fp, or weighted')
 
     args = parser.parse_args()
 
@@ -99,6 +100,7 @@ def main():
         except Exception as e:
             print(f"Error running model: {e}")
             return None
+
         with mlflow.start_run(run_name=args.run_name):
             # Save confusion matrix figure
             cm_fig = disp.figure_
@@ -118,13 +120,23 @@ def main():
                 mlflow.log_metric("before_rl_precision", tp / (tp + fp + 1e-8))
                 mlflow.log_metric("before_rl_recall", tp / (tp + fn + 1e-8))
 
+            # Prepare input features if requested
+            input_features = None
+            if args.use_input_features:
+                print("Including original input features in RL training...")
+                input_features = X_train.copy()
+
+                # Log feature info
+                mlflow.log_param("input_features_dim", input_features.shape[1])
+
             # Train the RL model
             print(f"Starting training with {args.timesteps} timesteps...")
 
             trained_model = train_with_accuracy_checkpoints(
-                baseline_probs=baseline_probs.detach().numpy(),
-                hidden_reps=hidden_reps.detach().numpy(),
+                baseline_probs=baseline_probs.detach().cpu().numpy(),
+                hidden_reps=hidden_reps.detach().cpu().numpy(),
                 true_labels=y_train,
+                input_features=input_features,  # This is the new parameter
                 max_adjustment=args.max_adjustment,
                 timesteps=args.timesteps,
                 experiment_name=args.experiment_name,
@@ -132,93 +144,106 @@ def main():
                 fp_weight=args.fp_weight,
                 learning_rate=args.learning_rate
             )
+        with mlflow.start_run(run_name=args.run_name + '_evaluate'):
+            print("Loading test data...")
+            input_features = None
+            if args.use_input_features:
+                print("Including original input features in RL training...")
+                input_features = X_test.copy()
 
-        # # Register model if requested
-        # if args.register_model:
-        #     print(f"Registering models with MLflow...")
-        #     # Register all three model variants
-        #     log_model_to_registry(
-        #         "./best_model/best_accuracy_model.zip",
-        #         f"{args.model_name}_accuracy"
-        #     )
-        #     log_model_to_registry(
-        #         "./best_model/best_fp_model.zip",
-        #         f"{args.model_name}_fp"
-        #     )
-        #     log_model_to_registry(
-        #         "./best_model/best_weighted_model.zip",
-        #         f"{args.model_name}_weighted"
-        #     )
+                # Log feature info
+                mlflow.log_param("input_features_dim", input_features.shape[1])
 
-    # elif args.mode == 'evaluate':
-    #     print("Loading data for evaluation...")
-    #     try:
-    #         baseline_probs, hidden_reps, true_labels = load_data(args.data_dir)
-    #     except FileNotFoundError:
-    #         print(f"Error: Data files not found in {args.data_dir}")
-    #         return
+            try:
+                mlflow.log_param("test_samples", X_test.shape[0])
+                mlflow.log_param("positive_ratio", np.mean(y_test))
+            except Exception as e:
+                print(f"Error loading test data: {e}")
+                return None
 
-    #     print(f"Loading best model with priority: {args.model_priority}")
-    #     try:
-    #         model = get_best_model(priority=args.model_priority)
-    #     except (FileNotFoundError, ValueError) as e:
-    #         print(f"Error loading model: {e}")
-    #         return
+            X_test_tensor = torch.tensor(
+                X_test, dtype=torch.float32).to(device)
 
-    #     # Run evaluation
-    #     with mlflow.start_run(run_name=f"evaluation_{args.model_priority}"):
-    #         mlflow.log_param("model_priority", args.model_priority)
-    #         mlflow.log_param("max_adjustment", args.max_adjustment)
-    #         mlflow.log_param("data_size", len(baseline_probs))
+            baseline_probs, hidden_reps = model(X_test_tensor)
 
-    #         print("Evaluating RL model corrections...")
-    #         results = evaluate_rl_corrections(
-    #             model,
-    #             baseline_probs,
-    #             hidden_reps,
-    #             true_labels,
-    #             max_adjustment=args.max_adjustment,
-    #             log_to_mlflow=True
-    #         )
+            y_pred = (baseline_probs >= 0.5).float().cpu().numpy().squeeze()
 
-    # elif args.mode == 'infer':
-    #     print("Loading data for inference...")
-    #     try:
-    #         baseline_probs, hidden_reps, _ = load_data(args.data_dir)
-    #         # In inference mode, we don't need true labels
-    #     except FileNotFoundError:
-    #         print(f"Error: Data files not found in {args.data_dir}")
-    #         return
+            # Compute confusion matrix
+            cm = confusion_matrix(y_test, y_pred)
 
-    #     print(f"Loading best model with priority: {args.model_priority}")
-    #     try:
-    #         model = get_best_model(priority=args.model_priority)
-    #     except (FileNotFoundError, ValueError) as e:
-    #         print(f"Error loading model: {e}")
-    #         return
+            # Display confusion matrix
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+            disp.plot(cmap='Blues')
+            plt.title("Confusion Matrix Before RL Training Evaluation")
 
-    #     # Apply corrections
-    #     print("Applying RL model corrections...")
-    #     corrected_probs = apply_corrections(
-    #         model,
-    #         baseline_probs,
-    #         hidden_reps,
-    #         max_adjustment=args.max_adjustment
-    #     )
+            cm_fig = disp.figure_
+            cm_path = "before_rl_confusion_matrix_evaluation.png"
+            cm_fig.savefig(cm_path)
+            mlflow.log_artifact(cm_path, artifact_path="before_rl_evaluation")
 
-    #     # Calculate changes
-    #     original_preds = (baseline_probs >= 0.5).astype(int)
-    #     corrected_preds = (corrected_probs >= 0.5).astype(int)
-    #     changed = np.sum(original_preds != corrected_preds)
+            # Log some basic pre-training metrics
+            cm_values = cm.ravel()
+            if len(cm_values) == 4:
+                tn, fp, fn, tp = cm_values
+                mlflow.log_metric("before_rl_evaluation_true_negatives", tn)
+                mlflow.log_metric("before_rl_evaluation_false_positives", fp)
+                mlflow.log_metric("before_rl_evaluation_false_negatives", fn)
+                mlflow.log_metric("before_rl_evaluation_true_positives", tp)
+                mlflow.log_metric(
+                    "before_rl_evaluation_accuracy", (tp + tn) / cm.sum())
+                mlflow.log_metric(
+                    "before_rl_evaluation_precision", tp / (tp + fp + 1e-8))
+                mlflow.log_metric(
+                    "before_rl_evaluation_recall", tp / (tp + fn + 1e-8))
 
-    #     print(f"Applied corrections to {len(baseline_probs)} predictions")
-    #     print(
-    #         f"Changed {changed} predictions ({changed/len(baseline_probs)*100:.2f}%)")
+            print("Evaluating models...")
+            corrected_probs, adjustments = td3_inference(
+                trained_model=trained_model,
+                baseline_probs=baseline_probs,
+                hidden_reps=hidden_reps,
+                input_features=input_features,  # Optional
+                max_adjustment=0.6    # Same as during training
+            )
 
-    #     # Save the corrected probabilities
-    #     output_file = os.path.join(args.data_dir, "corrected_probs.npy")
-    #     np.save(output_file, corrected_probs)
-    #     print(f"Saved corrected probabilities to {output_file}")
+            # 4. Use the corrected probabilities
+            corrected_predictions = (corrected_probs >= 0.5).astype(int)
+
+            # Compute confusion matrix
+            cm = confusion_matrix(y_test, corrected_predictions)
+
+            # Display confusion matrix
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+            disp.plot(cmap='Blues')
+            plt.title("Confusion Matrix After RL Training Evaluation")
+
+            cm_fig = disp.figure_
+            cm_path = "after_rl_confusion_matrix_evaluation.png"
+            cm_fig.savefig(cm_path)
+            mlflow.log_artifact(cm_path, artifact_path="after_rl_evaluation")
+
+            # Log the same metrics as training for the corrected predictions
+            cm_values = cm.ravel()
+            if len(cm_values) == 4:
+                tn, fp, fn, tp = cm_values
+                mlflow.log_metric("after_rl_evaluation_true_negatives", tn)
+                mlflow.log_metric("after_rl_evaluation_false_positives", fp)
+                mlflow.log_metric("after_rl_evaluation_false_negatives", fn)
+                mlflow.log_metric("after_rl_evaluation_true_positives", tp)
+                mlflow.log_metric(
+                    "after_rl_evaluation_accuracy", (tp + tn) / cm.sum())
+                mlflow.log_metric(
+                    "after_rl_evaluation_precision", tp / (tp + fp + 1e-8))
+                mlflow.log_metric("after_rl_evaluation_recall",
+                                  tp / (tp + fn + 1e-8))
+
+            # 7. Log the link to the run
+            run_id = mlflow.active_run().info.run_id
+            print(f"\nEvaluation complete! MLflow run ID: {run_id}")
+
+    elif args.mode == 'infer':
+        # Inference logic would be updated to handle input features
+        print("Inference mode - implement based on your specific inference needs")
+        # Example of what might be added for inference with input features
 
 
 if __name__ == "__main__":
