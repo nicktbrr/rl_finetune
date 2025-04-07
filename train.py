@@ -141,12 +141,14 @@
 import os
 import mlflow
 import numpy as np
+import torch
 import torch.nn as nn
 from stable_baselines3 import TD3
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from env import EnhancedFineTuneEnv
 from callbacks import AccuracyCheckpointCallback
+
 
 
 def train_with_accuracy_checkpoints(baseline_probs, hidden_reps, true_labels,
@@ -221,7 +223,7 @@ def train_with_accuracy_checkpoints(baseline_probs, hidden_reps, true_labels,
     td3_config = {
         'learning_rate': learning_rate,
         'buffer_size': 200000,
-        'learning_starts': 10000,
+        'learning_starts': 2000,
         'batch_size': 128,
         'tau': 0.001,
         'gamma': 0.95,
@@ -255,7 +257,9 @@ def train_with_accuracy_checkpoints(baseline_probs, hidden_reps, true_labels,
 
     # Create and train the model
     print("Starting TD3 training with accuracy-based checkpoints...")
-    model_rl = TD3("MlpPolicy", train_env, verbose=1, **td3_config)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(device)
+    model_rl = TD3("MlpPolicy", train_env, verbose=1, **td3_config, device = device)
 
     # Train with callbacks
     model_rl.learn(
