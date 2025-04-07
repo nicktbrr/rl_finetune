@@ -32,7 +32,7 @@ def main():
                         help='Maximum probability adjustment allowed')
     parser.add_argument('--fp_weight', type=float, default=1.2,
                         help='Weight for false positives in score calculation')
-    parser.add_argument('--learning_rate', type=float, default=3e-4,
+    parser.add_argument('--learning_rate', type=float, default=1e-4,
                         help='Learning rate for TD3 agent')
 
     # New argument for using original input features

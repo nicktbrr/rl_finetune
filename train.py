@@ -155,7 +155,7 @@ def train_with_accuracy_checkpoints(baseline_probs, hidden_reps, true_labels,
                                     experiment_name="RL_Correction",
                                     run_name=None,
                                     fp_weight=1.2,
-                                    learning_rate=3e-4):
+                                    learning_rate=1e-4):
     """
     Train a TD3 agent to correct model predictions with focus on reducing false positives.
 
@@ -221,16 +221,17 @@ def train_with_accuracy_checkpoints(baseline_probs, hidden_reps, true_labels,
     td3_config = {
         'learning_rate': learning_rate,
         'buffer_size': 200000,
-        'learning_starts': 5000,
-        'batch_size': 256,
-        'tau': 0.005,
-        'gamma': 0.99,
+        'learning_starts': 10000,
+        'batch_size': 128,
+        'tau': 0.001,
+        'gamma': 0.95,
         'policy_delay': 2,
         'target_policy_noise': 0.3,
         'target_noise_clip': 0.5,
         'policy_kwargs': dict(
             net_arch=hidden_layers,
-            activation_fn=nn.ReLU
+            activation_fn=nn.ReLU,
+            normalize_images=True,
         )
     }
 
@@ -245,7 +246,7 @@ def train_with_accuracy_checkpoints(baseline_probs, hidden_reps, true_labels,
         baseline_probs=baseline_probs,
         true_labels=true_labels,
         input_features=input_features,  # Pass input_features to the callback
-        check_freq=5000,
+        check_freq=1000,
         save_path='./best_model/',
         fp_weight=fp_weight,  # Higher weight means more focus on reducing false positives
         log_to_mlflow=True,
