@@ -4,6 +4,11 @@ mlflow.db
 before_rl_confusion_matrix.png
 best_model/
 transformations.json
+.DS_Store
+after_rl_confusion_matrix_evaluation.png
+before_rl_confusion_matrix_evaluation.png
+data_monitoring/
+manual_rl_finetune/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

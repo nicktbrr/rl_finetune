@@ -331,7 +331,7 @@ class EnhancedFineTuneEnv(gym.Env):
                 else:
                     # Moving in wrong direction
                     if true_label == 0:  # Worse false positive
-                        reward = -5.0 * confidence_weight  # Stronger penalty
+                        reward = -3.0 * confidence_weight  # Stronger penalty
                     else:  # Worse false negative
                         reward = -3.0 * confidence_weight
 
