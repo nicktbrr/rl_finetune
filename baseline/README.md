@@ -5,6 +5,7 @@ This module contains a baseline neural network model for network intrusion detec
 ## Overview
 
 The baseline model is a simple neural network that:
+
 - Processes network traffic data to detect intrusions
 - Extracts hidden representations which are then used for RL-based fine-tuning
 - Integrates with MLflow for experiment tracking
@@ -23,7 +24,7 @@ The baseline model is a simple neural network that:
 Train the baseline model:
 
 ```bash
-python train.py --train /path/to/UNSW_NB15_training-set.csv --test /path/to/UNSW_NB15_testing-set.csv --epochs 10 --batch_size 250
+python main.py --train /path/to/UNSW_NB15_training-set.csv --test /path/to/UNSW_NB15_testing-set.csv --epochs 10 --batch_size 250
 ```
 
 ### Testing
